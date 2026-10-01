@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
-from prepare import TIME_BUDGET, evaluate_dice, load_train  # noqa: F401
+from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
 from scipy.ndimage import binary_dilation, gaussian_filter
 from skimage.draw import line as draw_line
 from skimage.measure import label, regionprops
@@ -128,12 +128,14 @@ def predict(image):
 
 
 if __name__ == "__main__":
+    batch_size = parse_batch_size()  # --batch-size N (fixed for a whole series)
     t0 = time.time()
-    # Optional tuning on load_train() goes here; it must stop within TIME_BUDGET seconds.
+    # Optional tuning on load_train(batch_size) goes here; it must stop within TIME_BUDGET s.
     tune_seconds = time.time() - t0
 
-    val_dice = evaluate_dice(predict)
+    val_dice = evaluate_dice(predict, batch_size)
     print("---")
     print(f"val_dice:        {val_dice:.6f}")
+    print(f"batch_size:      {batch_size}")
     print(f"tune_seconds:    {tune_seconds:.1f}")
     print(f"total_seconds:   {time.time() - t0:.1f}")

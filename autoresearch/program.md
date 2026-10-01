@@ -4,6 +4,15 @@ Expérience où le LLM fait sa propre recherche : améliorer **automatiquement**
 
 Inspiré de [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
+## Contexte (à lire, le repo n'a pas de CLAUDE.md)
+
+- Package Python `csd` géré par **uv** : toujours `uv run python ...` (jamais `python`/`pip` direct), lint `uv run ruff check`.
+- Les images CSD font 150×150 px (fenêtre 0.3 V, pas 2 mV), affichées en `origin="lower"` (lignes = y, colonnes = x).
+- Les **interdots** à détecter sont des petits « sticks » à ~45° (`theta ≈ π/4` ± 0.1), ~1–2 px de large, ~4–8 px de long, qui apparaissent comme des **creux très sombres** (≈ −7 pour un bruit ≈ 1).
+- Pièges : des **lignes de transition** sombres et longues relient les sticks (faux positifs fréquents, autres angles) ; le bruit a une forte composante **horizontale par ligne**.
+- Le masque cible = sticks rendus à intensité 1, flou gaussien σ=0.5, seuil 0.5 (masque binaire uint8).
+- Dans skimage, `probabilistic_hough_line(theta=...)` prend l'angle de la **normale** à la droite (`theta_stick − π/2`).
+
 ## Setup
 
 Pour démarrer une nouvelle série d'expériences, avec l'humain :
@@ -11,24 +20,25 @@ Pour démarrer une nouvelle série d'expériences, avec l'humain :
 1. **Choisir un tag** : proposer un tag basé sur la date du jour (ex. `oct1`). La branche `autoresearch/<tag>` ne doit pas exister — c'est une série neuve.
 2. **Créer la branche** : `git checkout -b autoresearch/<tag>` depuis `main`.
 3. **Lire les fichiers du périmètre** (le dossier est petit, lis-les en entier) :
-   - `CLAUDE.md` (racine) — contexte du projet `csd`.
    - `autoresearch/prepare.py` — constantes figées, génération des données, `evaluate_dice`. **Ne pas modifier.**
    - `autoresearch/detect.py` — le fichier que tu modifies (pipeline de détection).
    - Optionnel : `csd/generator.py` pour comprendre comment les images et masques sont rendus (sticks à ~45°, creux sombres, lignes de transition, bruit horizontal par ligne).
-4. **Vérifier les données** : `data/ar_train/meta.json` et `data/ar_val/meta.json` doivent exister. Sinon : `uv run python autoresearch/prepare.py` (~1 min).
-5. **Initialiser `autoresearch/results.tsv`** avec seulement la ligne d'en-tête. La baseline sera enregistrée au premier run.
-6. **Confirmer et lancer** : présente ce setup à l'humain. **Son accord à cette étape vaut approbation du plan pour toute la boucle** (y compris la règle « plan avant chaque outil » du `CLAUDE.md` global) : ensuite, plus aucune question.
+4. **Choisir la batch size** avec l'humain = nombre d'images de validation (et de réglage) par évaluation. Défaut **128** (~1.5 s par run). Plus petit = plus rapide mais score plus bruité ; plus grand = plus fiable. Cette valeur `N` est **fixe pour toute la série** : tous les runs utilisent le même `--batch-size N`, sinon les scores ne sont pas comparables. Note-la dans le premier commit / la description de la baseline.
+5. **Préparer les données** : `uv run python autoresearch/prepare.py --batch-size N` (ne génère que si `data/ar_train` / `data/ar_val` ont moins de `N` images ; ~1 min pour 128).
+6. **Initialiser `autoresearch/results.tsv`** avec seulement la ligne d'en-tête. La baseline sera enregistrée au premier run.
+7. **Confirmer et lancer** : présente ce setup à l'humain. **Son accord à cette étape vaut approbation du plan pour toute la boucle** (y compris la règle « plan avant chaque outil » du `CLAUDE.md` global) : ensuite, plus aucune question.
 
 ## Expérimentation
 
-Chaque expérience se lance avec : `uv run python autoresearch/detect.py`. Elle évalue `predict(image)` sur les 128 images de validation (`data/ar_val`) et imprime un résumé.
+Chaque expérience se lance avec : `uv run python autoresearch/detect.py --batch-size N`. Elle évalue `predict(image)` sur les `N` premières images de validation (`data/ar_val`) et imprime un résumé.
 
 **Ce que tu PEUX faire :**
 - Modifier `autoresearch/detect.py` — c'est le **seul** fichier que tu édites. Tout est permis : prétraitement, paramètres Hough, filtres morphologiques, filtre d'angle, post-traitement, approche complètement différente, recherche de paramètres sur `load_train()` dans le budget de temps, etc.
 
 **Ce que tu NE PEUX PAS faire :**
-- Modifier `autoresearch/prepare.py` (lecture seule : données, budget, métrique) ni le package `csd/`.
-- Lire les masques ou `sticks.jsonl` de `data/ar_val` (ni directement, ni via `load_dataset`). Seul `evaluate_dice` y touche. Pour régler quoi que ce soit, utilise `load_train()` (64 images + masques, seed différente).
+- Modifier `autoresearch/prepare.py` (lecture seule : données, budget, batch size, métrique) ni le package `csd/`.
+- Modifier le bloc d'évaluation de `detect.py` (`parse_batch_size()` → `evaluate_dice(predict, batch_size)` → résumé imprimé) ni changer `--batch-size` en cours de série.
+- Lire les masques ou `sticks.jsonl` de `data/ar_val` (ni directement, ni via `load_dataset`). Seul `evaluate_dice` y touche. Pour régler quoi que ce soit, utilise `load_train(batch_size)` (`N` images + masques, seed différente).
 - Installer des paquets ou ajouter des dépendances : uniquement ce qui est déjà dans `pyproject.toml` (numpy, scipy, scikit-image, matplotlib).
 - Modifier la métrique : `evaluate_dice` (Dice moyen par image) est la vérité terrain.
 
@@ -45,8 +55,9 @@ Chaque expérience se lance avec : `uv run python autoresearch/detect.py`. Elle 
 ```
 ---
 val_dice:        0.738981
+batch_size:      128
 tune_seconds:    0.0
-total_seconds:   2.5
+total_seconds:   1.4
 ```
 
 Extraire la métrique : `grep "^val_dice:\|^total_seconds:" autoresearch/run.log`
@@ -86,7 +97,7 @@ BOUCLE INFINIE :
 1. Regarder l'état git : branche et commit courants.
 2. Modifier `autoresearch/detect.py` avec une idée d'expérience.
 3. `uv run ruff check autoresearch/detect.py` (corriger s'il y a des erreurs), puis `git commit -am "<description courte>"`.
-4. Lancer : `uv run python autoresearch/detect.py > autoresearch/run.log 2>&1` (tout rediriger — pas de `tee`, ne pas inonder ton contexte).
+4. Lancer : `uv run python autoresearch/detect.py --batch-size N > autoresearch/run.log 2>&1` (tout rediriger — pas de `tee`, ne pas inonder ton contexte).
 5. Lire : `grep "^val_dice:\|^total_seconds:" autoresearch/run.log`
 6. Sortie vide = crash : `tail -n 50 autoresearch/run.log` pour lire la trace et tenter une correction. Après quelques essais infructueux, abandonner l'idée.
 7. Enregistrer la ligne dans `results.tsv`.
@@ -105,6 +116,6 @@ Tu es un chercheur autonome : si ça marche, on garde ; sinon on jette ; et la b
 - Débruitage du **bruit horizontal par ligne** (soustraire la médiane de chaque ligne avant le seuil).
 - Top-hat noir / filtre matché orienté à 45° (noyau en forme de stick) au lieu du seuil brut.
 - Seuil local (MAD par fenêtre) plutôt que global ; hystérésis (`skimage.filters.apply_hysteresis_threshold`).
-- Recherche aléatoire / coordinate descent des `PARAMS` sur `load_train()` dans `TIME_BUDGET`.
+- Recherche aléatoire / coordinate descent des `PARAMS` sur `load_train(batch_size)` dans `TIME_BUDGET`.
 - Supprimer la transformée de Hough si un filtre orienté + composantes connexes fait mieux (simplification).
 - Ajuster l'épaisseur du masque prédit à celle des cibles (≈ 1–2 px, flou σ=0.5 puis seuil 0.5).
