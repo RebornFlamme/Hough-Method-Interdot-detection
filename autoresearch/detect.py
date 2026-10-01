@@ -92,7 +92,18 @@ def hough_mask(
         lines[rr, cc] = True
     if dilate > 0:
         lines = binary_dilation(lines, iterations=dilate)
-    return lines & (depth > k_fill)
+    return lines & (depth > k_fill) & ridge(depth)
+
+
+def ridge(depth):
+    """Keep the centre line of a dip: local maxima of depth across the stick direction.
+
+    The interdot transition is a line; the broadening of its dip (temperature, tunnel
+    coupling, sensor bandwidth) is symmetric around it, so its position is the deepest
+    point of the profile perpendicular to the stick (direction (x+1, y-1)).
+    """
+    p = np.pad(depth, 1, mode="edge")
+    return depth >= np.maximum(p[2:, :-2], p[:-2, 2:])
 
 
 def filter_by_angle(mask, stick_theta=STICK_THETA, angle_tol=ANGLE_TOL, min_len=ANGLE_MIN_LEN):
