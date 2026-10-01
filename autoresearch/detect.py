@@ -34,6 +34,7 @@ PARAMS = {
     "k_low": 2.0,
     "half": 0.5,
     "k_peak": 3.5,
+    "k_strong": 7.0,
     "theta_tol": 0.08,
     "threshold": 3,
     "line_length": 2,
@@ -51,6 +52,7 @@ def hough_mask(
     k_low=2.0,
     half=0.5,
     k_peak=5.0,
+    k_strong=7.0,
     theta_tol=0.4,
     threshold=3,
     line_length=2,
@@ -67,6 +69,7 @@ def hough_mask(
         k_low: Minimum depth (in MADs) of pixels kept around detected segments.
         half: Fraction of its component's peak depth a pixel must reach (0.5 = FWHM).
         k_peak: Minimum peak depth (in MADs) of a kept component.
+        k_strong: Depth (in MADs) above which a dip is a seed even without Hough support.
         theta_tol: Angular tolerance around ``STICK_THETA`` [rad].
         threshold: Minimum number of Hough accumulator votes.
         line_length: Minimum segment length [px].
@@ -101,9 +104,12 @@ def hough_mask(
     for (x0, y0), (x1, y1) in segments:
         rr, cc = draw_line(y0, x0, y1, x1)
         lines[rr, cc] = True
+    # Very short interdots get too few Hough votes, but a dip this far above the noise
+    # is a real feature: seed it too (the angle filter rejects transition fragments).
+    seeds = lines | (depth > k_strong)
     if dilate > 0:
-        lines = binary_dilation(lines, iterations=dilate)
-    cand = lines & (depth > k_low)
+        seeds = binary_dilation(seeds, iterations=dilate)
+    cand = seeds & (depth > k_low)
 
     # An interdot dip has a roughly uniform amplitude along its length, while the
     # charge-transition lines attached to its ends are shallower and its thermal /
