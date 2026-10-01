@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
-from scipy.ndimage import binary_dilation, gaussian_filter
+from scipy.ndimage import binary_dilation, correlate, gaussian_filter
 from scipy.ndimage import label as ndlabel
 from scipy.ndimage import maximum as ndmaximum
 from skimage.draw import line as draw_line
@@ -35,6 +35,7 @@ PARAMS = {
     "half": 0.5,
     "k_peak": 3.5,
     "k_strong": 7.0,
+    "k_line": 4.5,
     "theta_tol": 0.08,
     "threshold": 3,
     "line_length": 2,
@@ -53,6 +54,7 @@ def hough_mask(
     half=0.5,
     k_peak=5.0,
     k_strong=7.0,
+    k_line=4.5,
     theta_tol=0.4,
     threshold=3,
     line_length=2,
@@ -70,6 +72,7 @@ def hough_mask(
         half: Fraction of its component's peak depth a pixel must reach (0.5 = FWHM).
         k_peak: Minimum peak depth (in MADs) of a kept component.
         k_strong: Depth (in MADs) above which a dip is a seed even without Hough support.
+        k_line: Seed threshold (in MADs) on the depth averaged along the stick (5 px).
         theta_tol: Angular tolerance around ``STICK_THETA`` [rad].
         threshold: Minimum number of Hough accumulator votes.
         line_length: Minimum segment length [px].
@@ -106,7 +109,13 @@ def hough_mask(
         lines[rr, cc] = True
     # Very short interdots get too few Hough votes, but a dip this far above the noise
     # is a real feature: seed it too (the angle filter rejects transition fragments).
-    seeds = lines | (depth > k_strong)
+    # Matched filter: averaging along the stick direction raises the SNR of faint
+    # interdots (white noise averages out, the dip does not).
+    along = correlate(smooth, np.eye(5) / 5, mode="nearest")
+    along_depth = (np.median(along) - along) / (
+        1.4826 * np.median(np.abs(along - np.median(along)))
+    )
+    seeds = lines | (depth > k_strong) | (along_depth > k_line)
     if dilate > 0:
         seeds = binary_dilation(seeds, iterations=dilate)
     cand = seeds & (depth > k_low)
