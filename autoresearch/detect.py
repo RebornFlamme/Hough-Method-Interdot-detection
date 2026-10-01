@@ -1,9 +1,10 @@
 """Stage 1 interdot detection — THE file the autoresearch agent edits.
 
-Pipeline (baseline):
-    1. robust thresholding of dark pixels (median − k·MAD) on a lightly smoothed image;
-    2. probabilistic Hough transform restricted to angles around the stick orientation;
-    3. segments drawn, dilated, intersected with a looser threshold (``k_fill``);
+Pipeline:
+    1. per-row offset removal (scan-line drift), depth in noise units;
+    2. seeds: pixels whose depth averaged along the stick direction (matched filter)
+       is significant;
+    3. around the seeds, keep pixels above half of their component's peak depth (FWHM);
     4. angle filter: connected components whose main axis is not aligned with the
        sticks (e.g. fragments of charge-transition lines) are deleted.
 
@@ -19,81 +20,78 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
-from scipy.ndimage import binary_dilation, gaussian_filter
-from skimage.draw import line as draw_line
+from scipy.ndimage import binary_dilation, correlate
+from scipy.ndimage import label as ndlabel
+from scipy.ndimage import maximum as ndmaximum
 from skimage.measure import label, regionprops
-from skimage.transform import probabilistic_hough_line
 
 STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed with origin="lower"
 
-# Parameters found by random search (300 trials) on a separate tuning set.
+# Parameters tuned on load_train() (grid / coordinate search).
 PARAMS = {
-    "sigma": 0.29,
-    "k": 2.72,
-    "k_fill": 5.01,
-    "theta_tol": 0.26,
-    "threshold": 5,
-    "line_length": 2,
-    "line_gap": 2,
-    "dilate": 1,
+    "k_line": 3.5,
+    "line_len": 5,
+    "dilate": 2,
+    "k_low": 2.0,
+    "half": 0.6,
+    "k_peak": 3.0,
 }
 ANGLE_TOL = 0.6  # max deviation [rad] between a component's main axis and STICK_THETA
-ANGLE_MIN_LEN = 3.0  # components shorter than this [px] have no reliable angle: kept
+ANGLE_MIN_LEN = 2.0  # components shorter than this [px] have no reliable angle: kept
 
 
-def hough_mask(
+def robust_depth(a):
+    """Dip depth in noise units: (median − a) / (1.4826·MAD)."""
+    med = np.median(a)
+    return (med - a) / (1.4826 * np.median(np.abs(a - med)))
+
+
+def dip_mask(
     image,
-    sigma=0.5,
-    k=4.0,
-    k_fill=4.0,
-    theta_tol=0.4,
-    threshold=3,
-    line_length=2,
-    line_gap=1,
-    dilate=1,
-    seed=0,
+    k_line=3.5,
+    line_len=5,
+    dilate=2,
+    k_low=2.0,
+    half=0.5,
+    k_peak=3.5,
 ):
-    """Predict an interdot mask with a probabilistic Hough transform.
+    """Predict an interdot mask from the dark dips of a CSD.
 
     Args:
         image: Raw 2D CSD image (interdots are dark dips).
-        sigma: Std of the Gaussian smoothing applied before thresholding.
-        k: Detection threshold, in MADs below the median, for the Hough input.
-        k_fill: Threshold (in MADs) of pixels kept around detected segments.
-        theta_tol: Angular tolerance around ``STICK_THETA`` [rad].
-        threshold: Minimum number of Hough accumulator votes.
-        line_length: Minimum segment length [px].
-        line_gap: Maximum gap between pixels of a same segment [px].
-        dilate: Dilation of the drawn segments [px] before the ``k_fill`` threshold.
-        seed: Seed of ``probabilistic_hough_line``'s random sampling.
+        k_line: Seed threshold (in MADs) on the depth averaged along the stick.
+        line_len: Length [px] of the averaging along the stick (matched filter).
+        dilate: Dilation of the seeds [px] before the depth thresholds.
+        k_low: Minimum depth (in MADs) of kept pixels.
+        half: Fraction of its component's amplitude a pixel must reach (~ FWHM).
+        k_peak: Minimum amplitude (in MADs) of a kept component.
 
     Returns:
         Boolean mask with the same shape as ``image``.
     """
-    smooth = gaussian_filter(np.asarray(image, dtype=float), sigma)
-    med = np.median(smooth)
-    mad = 1.4826 * np.median(np.abs(smooth - med))
-    depth = (med - smooth) / mad  # dip depth, in noise units
+    image = np.asarray(image, dtype=float)
+    # Charge-sensor drift between scan lines adds a per-row offset: remove it.
+    image = image - np.median(image, axis=1, keepdims=True)
+    depth = robust_depth(image)
 
-    # skimage parametrises a line by the angle of its normal: theta_stick - pi/2.
-    normal = STICK_THETA - np.pi / 2
-    thetas = np.linspace(normal - theta_tol, normal + theta_tol, 41)
-    segments = probabilistic_hough_line(
-        depth > k,
-        threshold=threshold,
-        line_length=line_length,
-        line_gap=line_gap,
-        theta=thetas,
-        rng=seed,
-    )
-
-    lines = np.zeros(image.shape, dtype=bool)
-    for (x0, y0), (x1, y1) in segments:
-        rr, cc = draw_line(y0, x0, y1, x1)
-        lines[rr, cc] = True
+    # Matched filter: averaging along the stick direction raises the SNR of faint
+    # interdots (white noise averages out, the dip does not).
+    along = robust_depth(correlate(image, np.eye(line_len) / line_len, mode="nearest"))
+    seeds = along > k_line
     if dilate > 0:
-        lines = binary_dilation(lines, iterations=dilate)
-    return lines & (depth > k_fill)
+        seeds = binary_dilation(seeds, iterations=dilate)
+    cand = seeds & (depth > k_low)
+
+    # An interdot dip has a roughly uniform amplitude along its length, while the
+    # charge-transition lines attached to its ends are shallower and its thermal /
+    # tunnel broadening forms tails across it: keep, in each component, the pixels
+    # above ~half of its amplitude (full width at half maximum, in every direction).
+    # The amplitude is the max of the depth averaged over 2 px along the stick: the
+    # single-pixel max is biased upwards by the noise.
+    labels, n = ndlabel(cand, structure=np.ones((3, 3)))
+    smooth_depth = correlate(depth, np.eye(2) / 2, mode="nearest")
+    amp = np.concatenate([[0.0], ndmaximum(smooth_depth, labels, np.arange(1, n + 1))])[labels]
+    return cand & (depth > half * amp) & (amp > k_peak)
 
 
 def filter_by_angle(mask, stick_theta=STICK_THETA, angle_tol=ANGLE_TOL, min_len=ANGLE_MIN_LEN):
@@ -123,7 +121,7 @@ def filter_by_angle(mask, stick_theta=STICK_THETA, angle_tol=ANGLE_TOL, min_len=
 
 def predict(image):
     """Full pipeline: raw image -> binary interdot mask (uint8)."""
-    mask = hough_mask(image, **PARAMS)
+    mask = dip_mask(image, **PARAMS)
     mask = filter_by_angle(mask)
     return mask.astype(np.uint8)
 
