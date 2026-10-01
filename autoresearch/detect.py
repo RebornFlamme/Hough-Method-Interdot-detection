@@ -3,8 +3,7 @@
 Pipeline (baseline):
     1. robust thresholding of dark pixels (median − k·MAD) on a lightly smoothed image;
     2. probabilistic Hough transform restricted to angles around the stick orientation;
-    3. segments drawn, dilated, kept on the dip centre line (ridge) above half of
-       each component's peak depth;
+    3. segments drawn, dilated, kept above half of each component's peak depth (FWHM);
     4. angle filter: connected components whose main axis is not aligned with the
        sticks (e.g. fragments of charge-transition lines) are deleted.
 
@@ -28,7 +27,7 @@ from skimage.transform import probabilistic_hough_line
 
 STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed with origin="lower"
 
-# Parameters found by random search (300 trials) on a separate tuning set.
+# Parameters tuned on load_train() (grid / coordinate search).
 PARAMS = {
     "sigma": 0.29,
     "k": 2.5,
@@ -104,25 +103,15 @@ def hough_mask(
         lines[rr, cc] = True
     if dilate > 0:
         lines = binary_dilation(lines, iterations=dilate)
-    cand = lines & ridge(depth) & (depth > k_low)
+    cand = lines & (depth > k_low)
 
     # An interdot dip has a roughly uniform amplitude along its length, while the
-    # charge-transition lines attached to its ends are shallower: keep, in each
-    # component, the pixels above half of its peak depth (full width at half maximum).
+    # charge-transition lines attached to its ends are shallower and its thermal /
+    # tunnel broadening forms tails across it: keep, in each component, the pixels
+    # above half of its peak depth (full width at half maximum, in every direction).
     labels, n = ndlabel(cand, structure=np.ones((3, 3)))
     peak = np.concatenate([[0.0], ndmaximum(depth, labels, np.arange(1, n + 1))])[labels]
     return cand & (depth > half * peak) & (peak > k_peak)
-
-
-def ridge(depth):
-    """Keep the centre line of a dip: local maxima of depth across the stick direction.
-
-    The interdot transition is a line; the broadening of its dip (temperature, tunnel
-    coupling, sensor bandwidth) is symmetric around it, so its position is the deepest
-    point of the profile perpendicular to the stick (direction (x+1, y-1)).
-    """
-    p = np.pad(depth, 1, mode="edge")
-    return depth >= np.maximum(p[2:, :-2], p[:-2, 2:])
 
 
 def filter_by_angle(mask, stick_theta=STICK_THETA, angle_tol=ANGLE_TOL, min_len=ANGLE_MIN_LEN):
