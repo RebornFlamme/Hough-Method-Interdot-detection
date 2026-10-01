@@ -3,7 +3,8 @@
 Pipeline (baseline):
     1. robust thresholding of dark pixels (median − k·MAD) on a lightly smoothed image;
     2. probabilistic Hough transform restricted to angles around the stick orientation;
-    3. segments drawn, dilated, intersected with a looser threshold (``k_fill``);
+    3. segments drawn, dilated, kept on the dip centre line (ridge) above half of
+       each component's peak depth;
     4. angle filter: connected components whose main axis is not aligned with the
        sticks (e.g. fragments of charge-transition lines) are deleted.
 
@@ -19,6 +20,8 @@ import time
 import numpy as np
 from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
 from scipy.ndimage import binary_dilation, gaussian_filter
+from scipy.ndimage import label as ndlabel
+from scipy.ndimage import maximum as ndmaximum
 from skimage.draw import line as draw_line
 from skimage.measure import label, regionprops
 from skimage.transform import probabilistic_hough_line
@@ -29,7 +32,9 @@ STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed wit
 PARAMS = {
     "sigma": 0.29,
     "k": 3.5,
-    "k_fill": 6.0,
+    "k_low": 2.0,
+    "half": 0.5,
+    "k_peak": 5.0,
     "theta_tol": 0.26,
     "threshold": 5,
     "line_length": 2,
@@ -44,7 +49,9 @@ def hough_mask(
     image,
     sigma=0.5,
     k=4.0,
-    k_fill=4.0,
+    k_low=2.0,
+    half=0.5,
+    k_peak=5.0,
     theta_tol=0.4,
     threshold=3,
     line_length=2,
@@ -58,12 +65,14 @@ def hough_mask(
         image: Raw 2D CSD image (interdots are dark dips).
         sigma: Std of the Gaussian smoothing applied before thresholding.
         k: Detection threshold, in MADs below the median, for the Hough input.
-        k_fill: Threshold (in MADs) of pixels kept around detected segments.
+        k_low: Minimum depth (in MADs) of pixels kept around detected segments.
+        half: Fraction of its component's peak depth a pixel must reach (0.5 = FWHM).
+        k_peak: Minimum peak depth (in MADs) of a kept component.
         theta_tol: Angular tolerance around ``STICK_THETA`` [rad].
         threshold: Minimum number of Hough accumulator votes.
         line_length: Minimum segment length [px].
         line_gap: Maximum gap between pixels of a same segment [px].
-        dilate: Dilation of the drawn segments [px] before the ``k_fill`` threshold.
+        dilate: Dilation of the drawn segments [px] before the depth thresholds.
         seed: Seed of ``probabilistic_hough_line``'s random sampling.
 
     Returns:
@@ -95,7 +104,14 @@ def hough_mask(
         lines[rr, cc] = True
     if dilate > 0:
         lines = binary_dilation(lines, iterations=dilate)
-    return lines & (depth > k_fill) & ridge(depth)
+    cand = lines & ridge(depth) & (depth > k_low)
+
+    # An interdot dip has a roughly uniform amplitude along its length, while the
+    # charge-transition lines attached to its ends are shallower: keep, in each
+    # component, the pixels above half of its peak depth (full width at half maximum).
+    labels, n = ndlabel(cand, structure=np.ones((3, 3)))
+    peak = np.concatenate([[0.0], ndmaximum(depth, labels, np.arange(1, n + 1))])[labels]
+    return cand & (depth > half * peak) & (peak > k_peak)
 
 
 def ridge(depth):
