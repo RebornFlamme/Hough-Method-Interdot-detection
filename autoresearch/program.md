@@ -18,11 +18,10 @@ Inspiré de [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 Pour démarrer une nouvelle série d'expériences, avec l'humain :
 
 1. **Choisir un tag** : proposer un tag basé sur la date du jour (ex. `oct1`). La branche `autoresearch/<tag>` ne doit pas exister — c'est une série neuve.
-2. **Créer la branche** : `git checkout -b autoresearch/<tag>` depuis `main`.
-3. **Lire les fichiers du périmètre** (le dossier est petit, lis-les en entier) :
+2. **Créer la branche, toujours depuis `main`** : `git checkout main` puis `git checkout -b autoresearch/<tag>`. Chaque série repart de la **baseline de `main`** (`detect.py` tel qu'il est sur `main`). Ne jamais repartir d'une branche `autoresearch/*` précédente, ni consulter / réutiliser son code, ses résultats ou son `results.tsv`.
+3. **Lire les fichiers du périmètre** (le dossier est petit, lis-les en entier) — et **rien d'autre** (voir « Pas de connaissance du simulateur ») :
    - `autoresearch/prepare.py` — constantes figées, génération des données, `evaluate_dice`. **Ne pas modifier.**
    - `autoresearch/detect.py` — le fichier que tu modifies (pipeline de détection).
-   - Optionnel : `csd/generator.py` pour comprendre comment les images et masques sont rendus (sticks à ~45°, creux sombres, lignes de transition, bruit horizontal par ligne).
 4. **Choisir la batch size** avec l'humain = nombre d'images de validation (et de réglage) par évaluation. Défaut **128** (~1.5 s par run). Plus petit = plus rapide mais score plus bruité ; plus grand = plus fiable. Cette valeur `N` est **fixe pour toute la série** : tous les runs utilisent le même `--batch-size N`, sinon les scores ne sont pas comparables. Note-la dans le premier commit / la description de la baseline.
 5. **Préparer les données** : `uv run python autoresearch/prepare.py --batch-size N` (ne génère que si `data/ar_train` / `data/ar_val` ont moins de `N` images ; ~1 min pour 128).
 6. **Initialiser `autoresearch/results.tsv`** avec seulement la ligne d'en-tête. La baseline sera enregistrée au premier run.
@@ -41,6 +40,11 @@ Chaque expérience se lance avec : `uv run python autoresearch/detect.py --batch
 - Lire les masques ou `sticks.jsonl` de `data/ar_val` (ni directement, ni via `load_dataset`). Seul `evaluate_dice` y touche. Pour régler quoi que ce soit, utilise `load_train(batch_size)` (`N` images + masques, seed différente).
 - Installer des paquets ou ajouter des dépendances : uniquement ce qui est déjà dans `pyproject.toml` (numpy, scipy, scikit-image, matplotlib).
 - Modifier la métrique : `evaluate_dice` (Dice moyen par image) est la vérité terrain.
+- **Pas de connaissance du simulateur** (expérience en aveugle) :
+  - ne pas lire le package `csd/` (`generator.py`, `config.py`, `dataset.py`, `simulator.py`…) ni aucun code / doc qui décrit la génération des données ;
+  - ne pas lire `sticks.jsonl` ni `meta.json`, **même de `data/ar_train`** : le réglage n'utilise que `load_train()` (images + masques) ;
+  - ne pas exploiter de paramètres du générateur connus par ailleurs (plages d'intensité, ratios, largeurs, probabilités…) ;
+  - les seules connaissances a priori autorisées sont la section *Contexte* ci-dessus et ce que tu mesures toi-même sur les images / masques de `load_train()`.
 
 **Objectif : le `val_dice` le plus haut possible.**
 
@@ -108,7 +112,7 @@ Tu es un chercheur autonome : si ça marche, on garde ; sinon on jette ; et la b
 
 **Crashs** : bug bête (typo, import manquant) → corrige et relance. Idée fondamentalement cassée → statut `crash` dans le TSV et on passe à la suite.
 
-**NE JAMAIS S'ARRÊTER** : une fois la boucle lancée (après le setup), ne demande PAS à l'humain s'il faut continuer, ni « est-ce un bon moment pour s'arrêter ? ». L'humain dort peut-être ou n'est pas devant l'ordinateur, et s'attend à ce que tu travailles *indéfiniment* jusqu'à ce qu'il t'arrête. Si tu manques d'idées, réfléchis plus : relis `csd/generator.py` (comment le bruit, les sticks et les lignes sont générés), combine des quasi-succès, essaie des approches plus radicales.
+**NE JAMAIS S'ARRÊTER** : une fois la boucle lancée (après le setup), ne demande PAS à l'humain s'il faut continuer, ni « est-ce un bon moment pour s'arrêter ? ». L'humain dort peut-être ou n'est pas devant l'ordinateur, et s'attend à ce que tu travailles *indéfiniment* jusqu'à ce qu'il t'arrête. Si tu manques d'idées, réfléchis plus : réanalyse les images / masques de `load_train()` (erreurs par image, faux positifs / faux négatifs), combine des quasi-succès, essaie des approches plus radicales.
 
 ### Pistes d'idées (non exhaustif)
 
