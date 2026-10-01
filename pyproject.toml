@@ -18,7 +18,11 @@ dependencies = [
 [dependency-groups]
 # Tooling for contributors to this repo. `uv sync` installs this automatically;
 # skip it with `uv sync --no-dev`.
-dev = ["pytest", "ruff"]
+dev = [
+    "ipykernel==6.29.5",
+    "pytest",
+    "ruff",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["csd"]

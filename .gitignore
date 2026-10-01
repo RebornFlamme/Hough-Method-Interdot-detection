@@ -8,3 +8,7 @@ __pycache__/
 # generated datasets 
 data/
 *.npy
+# autoresearch (résultats locaux, non versionnés)
+autoresearch/results.tsv
+autoresearch/run.log
+autoresearch/progress.png
