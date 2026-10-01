@@ -31,18 +31,18 @@ STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed wit
 # Parameters found by random search (300 trials) on a separate tuning set.
 PARAMS = {
     "sigma": 0.29,
-    "k": 3.5,
+    "k": 2.5,
     "k_low": 2.0,
     "half": 0.5,
-    "k_peak": 5.0,
-    "theta_tol": 0.26,
-    "threshold": 5,
+    "k_peak": 3.5,
+    "theta_tol": 0.08,
+    "threshold": 3,
     "line_length": 2,
     "line_gap": 2,
     "dilate": 1,
 }
 ANGLE_TOL = 0.6  # max deviation [rad] between a component's main axis and STICK_THETA
-ANGLE_MIN_LEN = 3.0  # components shorter than this [px] have no reliable angle: kept
+ANGLE_MIN_LEN = 2.0  # components shorter than this [px] have no reliable angle: kept
 
 
 def hough_mask(
