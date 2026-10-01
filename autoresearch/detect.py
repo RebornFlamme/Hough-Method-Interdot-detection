@@ -32,8 +32,8 @@ PARAMS = {
     "line_len": 5,
     "dilate": 2,
     "k_low": 2.0,
-    "half": 0.5,
-    "k_peak": 3.5,
+    "half": 0.6,
+    "k_peak": 3.0,
 }
 ANGLE_TOL = 0.6  # max deviation [rad] between a component's main axis and STICK_THETA
 ANGLE_MIN_LEN = 2.0  # components shorter than this [px] have no reliable angle: kept
@@ -62,8 +62,8 @@ def dip_mask(
         line_len: Length [px] of the averaging along the stick (matched filter).
         dilate: Dilation of the seeds [px] before the depth thresholds.
         k_low: Minimum depth (in MADs) of kept pixels.
-        half: Fraction of its component's peak depth a pixel must reach (0.5 = FWHM).
-        k_peak: Minimum peak depth (in MADs) of a kept component.
+        half: Fraction of its component's amplitude a pixel must reach (~ FWHM).
+        k_peak: Minimum amplitude (in MADs) of a kept component.
 
     Returns:
         Boolean mask with the same shape as ``image``.
@@ -84,10 +84,13 @@ def dip_mask(
     # An interdot dip has a roughly uniform amplitude along its length, while the
     # charge-transition lines attached to its ends are shallower and its thermal /
     # tunnel broadening forms tails across it: keep, in each component, the pixels
-    # above half of its peak depth (full width at half maximum, in every direction).
+    # above ~half of its amplitude (full width at half maximum, in every direction).
+    # The amplitude is the max of the depth averaged over 2 px along the stick: the
+    # single-pixel max is biased upwards by the noise.
     labels, n = ndlabel(cand, structure=np.ones((3, 3)))
-    peak = np.concatenate([[0.0], ndmaximum(depth, labels, np.arange(1, n + 1))])[labels]
-    return cand & (depth > half * peak) & (peak > k_peak)
+    smooth_depth = correlate(depth, np.eye(2) / 2, mode="nearest")
+    amp = np.concatenate([[0.0], ndmaximum(smooth_depth, labels, np.arange(1, n + 1))])[labels]
+    return cand & (depth > half * amp) & (amp > k_peak)
 
 
 def filter_by_angle(mask, stick_theta=STICK_THETA, angle_tol=ANGLE_TOL, min_len=ANGLE_MIN_LEN):
