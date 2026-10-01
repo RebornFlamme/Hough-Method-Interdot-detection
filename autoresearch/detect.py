@@ -1,9 +1,9 @@
 """Stage 1 interdot detection — THE file the autoresearch agent edits.
 
 Pipeline:
-    1. per-row offset removal (scan-line drift), light smoothing, depth in noise units;
-    2. seeds: dips far above the noise, or whose depth averaged along the stick
-       direction (matched filter) is significant;
+    1. per-row offset removal (scan-line drift), depth in noise units;
+    2. seeds: pixels whose depth averaged along the stick direction (matched filter)
+       is significant;
     3. around the seeds, keep pixels above half of their component's peak depth (FWHM);
     4. angle filter: connected components whose main axis is not aligned with the
        sticks (e.g. fragments of charge-transition lines) are deleted.
@@ -19,7 +19,7 @@ import time
 
 import numpy as np
 from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
-from scipy.ndimage import binary_dilation, correlate, gaussian_filter
+from scipy.ndimage import binary_dilation, correlate
 from scipy.ndimage import label as ndlabel
 from scipy.ndimage import maximum as ndmaximum
 from skimage.measure import label, regionprops
@@ -28,8 +28,6 @@ STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed wit
 
 # Parameters tuned on load_train() (grid / coordinate search).
 PARAMS = {
-    "sigma": 0.29,
-    "k_strong": 9.0,
     "k_line": 3.5,
     "line_len": 5,
     "dilate": 2,
@@ -49,8 +47,6 @@ def robust_depth(a):
 
 def dip_mask(
     image,
-    sigma=0.29,
-    k_strong=9.0,
     k_line=3.5,
     line_len=5,
     dilate=2,
@@ -62,8 +58,6 @@ def dip_mask(
 
     Args:
         image: Raw 2D CSD image (interdots are dark dips).
-        sigma: Std of the Gaussian smoothing applied before everything.
-        k_strong: Depth (in MADs) above which a pixel is a seed.
         k_line: Seed threshold (in MADs) on the depth averaged along the stick.
         line_len: Length [px] of the averaging along the stick (matched filter).
         dilate: Dilation of the seeds [px] before the depth thresholds.
@@ -77,14 +71,12 @@ def dip_mask(
     image = np.asarray(image, dtype=float)
     # Charge-sensor drift between scan lines adds a per-row offset: remove it.
     image = image - np.median(image, axis=1, keepdims=True)
-    smooth = gaussian_filter(image, sigma)
-    depth = robust_depth(smooth)
+    depth = robust_depth(image)
 
     # Matched filter: averaging along the stick direction raises the SNR of faint
-    # interdots (white noise averages out, the dip does not). Dips far above the noise
-    # are seeds on their own (the angle filter rejects transition-line fragments).
-    along = robust_depth(correlate(smooth, np.eye(line_len) / line_len, mode="nearest"))
-    seeds = (depth > k_strong) | (along > k_line)
+    # interdots (white noise averages out, the dip does not).
+    along = robust_depth(correlate(image, np.eye(line_len) / line_len, mode="nearest"))
+    seeds = along > k_line
     if dilate > 0:
         seeds = binary_dilation(seeds, iterations=dilate)
     cand = seeds & (depth > k_low)
