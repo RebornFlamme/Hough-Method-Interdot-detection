@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 from prepare import TIME_BUDGET, evaluate_dice, load_train, parse_batch_size  # noqa: F401
 from scipy.ndimage import binary_dilation, gaussian_filter
@@ -133,9 +134,43 @@ if __name__ == "__main__":
     # Optional tuning on load_train(batch_size) goes here; it must stop within TIME_BUDGET s.
     tune_seconds = time.time() - t0
 
-    val_dice = evaluate_dice(predict, batch_size)
+    val_dice, val_results = evaluate_dice(predict, batch_size)
     print("---")
     print(f"val_dice:        {val_dice:.6f}")
     print(f"batch_size:      {batch_size}")
     print(f"tune_seconds:    {tune_seconds:.1f}")
     print(f"total_seconds:   {time.time() - t0:.1f}")
+
+    result_count = len(val_results)
+    display_count = min(4, result_count)
+    scores = np.asarray([result[3] for result in val_results])
+    best_indices = np.argsort(scores)[-display_count:][::-1]
+    worst_indices = np.argsort(scores)[:display_count]
+    excluded = np.union1d(best_indices, worst_indices)
+    random_pool = np.setdiff1d(np.arange(result_count), excluded)
+    if len(random_pool) < display_count:
+        random_pool = np.arange(result_count)
+    random_indices = np.random.default_rng().choice(
+        random_pool, size=display_count, replace=False
+    )
+
+    for category, indices in (
+        ("4 meilleurs", best_indices),
+        ("4 pires", worst_indices),
+        ("4 aléatoires", random_indices),
+    ):
+        figure, axes = plt.subplots(display_count, 3, figsize=(12, 3 * display_count), squeeze=False)
+        figure.suptitle(category)
+        for row, index in enumerate(indices):
+            image, prediction, target, score = val_results[index]
+            axes[row, 0].imshow(image, origin="lower", cmap="plasma")
+            axes[row, 0].set_title(f"Image {index} | Dice: {score:.4f}")
+            axes[row, 1].imshow(prediction, origin="lower", cmap="gray", vmin=0, vmax=1)
+            axes[row, 1].set_title("Masque prédit")
+            axes[row, 2].imshow(target, origin="lower", cmap="gray", vmin=0, vmax=1)
+            axes[row, 2].set_title("Masque cible")
+            for axis in axes[row]:
+                axis.axis("off")
+        figure.tight_layout()
+
+    plt.show()

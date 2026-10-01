@@ -31,7 +31,7 @@ TRAIN_DIR = REPO / "data" / "ar_train"  # tuning set: images + masks usable by d
 TRAIN_SEED = 1
 VAL_DIR = REPO / "data" / "ar_val"  # evaluation set: masks reserved to evaluate_dice
 VAL_SEED = 2
-DEFAULT_BATCH_SIZE = 128  # number of images used per evaluation (and per tuning set)
+DEFAULT_BATCH_SIZE = 2000  # number of images used per evaluation (and per tuning set)
 TIME_BUDGET = 60.0  # seconds allowed for any tuning/search inside detect.py
 
 
@@ -134,7 +134,7 @@ def dice(pred: np.ndarray, target: np.ndarray) -> float:
 
 def evaluate_dice(
     predict_fn: Callable[[np.ndarray], np.ndarray], batch_size: int = DEFAULT_BATCH_SIZE
-) -> float:
+) -> tuple[float, list[tuple[np.ndarray, np.ndarray, np.ndarray, float]]]:
     """Ground-truth metric: mean per-image Dice of ``predict_fn`` on the validation set.
 
     Args:
@@ -142,16 +142,22 @@ def evaluate_dice(
         batch_size: Number of validation images evaluated (the first ones of ``ar_val``).
 
     Returns:
-        Mean Dice over the ``batch_size`` validation images (higher is better).
+        ``(global_score, results)`` where each result is an
+        ``(image, prediction, target, score)`` quadruplet.
     """
     images, masks = _load(VAL_DIR, batch_size)
+    results = []
     scores = []
+
     for image, target in zip(images, masks):
         pred = np.asarray(predict_fn(image.copy()))
         if pred.shape != target.shape:
             raise ValueError(f"predict_fn returned shape {pred.shape}, expected {target.shape}")
-        scores.append(dice(pred, target))
-    return float(np.mean(scores))
+        score = dice(pred, target)
+        results.append((image, pred, target, score))
+        scores.append(score)
+
+    return float(np.mean(scores)), results
 
 
 if __name__ == "__main__":
