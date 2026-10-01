@@ -28,8 +28,8 @@ STICK_THETA = np.pi / 4  # expected stick orientation [rad], image displayed wit
 # Parameters found by random search (300 trials) on a separate tuning set.
 PARAMS = {
     "sigma": 0.29,
-    "k": 2.72,
-    "k_fill": 5.01,
+    "k": 3.5,
+    "k_fill": 6.0,
     "theta_tol": 0.26,
     "threshold": 5,
     "line_length": 2,
@@ -69,7 +69,10 @@ def hough_mask(
     Returns:
         Boolean mask with the same shape as ``image``.
     """
-    smooth = gaussian_filter(np.asarray(image, dtype=float), sigma)
+    image = np.asarray(image, dtype=float)
+    # Charge-sensor drift between scan lines adds a per-row offset: remove it.
+    image = image - np.median(image, axis=1, keepdims=True)
+    smooth = gaussian_filter(image, sigma)
     med = np.median(smooth)
     mad = 1.4826 * np.median(np.abs(smooth - med))
     depth = (med - smooth) / mad  # dip depth, in noise units
